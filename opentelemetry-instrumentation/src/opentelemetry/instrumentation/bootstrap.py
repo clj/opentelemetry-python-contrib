@@ -125,7 +125,6 @@ def _find_installed_libraries(default_instrumentations, libraries):
 
 
 def _run_requirements(default_instrumentations, libraries):
-    logger.setLevel(logging.ERROR)
     print(
         "\n".join(
             _find_installed_libraries(default_instrumentations, libraries)
@@ -159,6 +158,9 @@ def run(
         version="%(prog)s " + __version__,
     )
     parser.add_argument(
+        "-q", "--quiet", help="don't print warnings", action="store_true"
+    )
+    parser.add_argument(
         "-a",
         "--action",
         choices=[action_install, action_requirements],
@@ -171,6 +173,9 @@ def run(
         """,
     )
     args = parser.parse_args()
+
+    if args.quiet:
+        logger.setLevel(logging.ERROR)
 
     if libraries is None:
         libraries = gen_libraries

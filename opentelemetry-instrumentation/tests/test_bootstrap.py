@@ -13,6 +13,7 @@
 # limitations under the License.
 # type: ignore
 
+import logging
 from io import StringIO
 from random import sample
 from unittest import TestCase
@@ -117,3 +118,11 @@ class TestBootstrap(TestCase):
             any_order=True,
         )
         self.mock_pip_check.assert_called_once()
+
+    @patch("sys.argv", ["bootstrap", "-a", "requirements", "-q"])
+    def test_quiet(self):
+        with patch(
+            "opentelemetry.instrumentation.bootstrap.logger"
+        ) as mock_logger:
+            bootstrap.run(libraries=[])
+        mock_logger.setLevel.assert_called_once_with(logging.ERROR)
