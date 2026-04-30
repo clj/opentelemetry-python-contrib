@@ -14,7 +14,11 @@
 # type: ignore
 
 import logging
+import tempfile
+from contextlib import contextmanager
 from io import StringIO
+from os import chdir, getcwd
+from pathlib import Path
 from random import sample
 from unittest import TestCase
 from unittest.mock import call, patch
@@ -31,6 +35,16 @@ def sample_packages(packages, rate):
         list(packages),
         int(len(packages) * rate),
     )
+
+
+@contextmanager
+def change_dir(dirname):
+    cwd = getcwd()
+    try:
+        chdir(dirname)
+        yield
+    finally:
+        chdir(cwd)
 
 
 class TestBootstrap(TestCase):
@@ -126,3 +140,90 @@ class TestBootstrap(TestCase):
         ) as mock_logger:
             bootstrap.run(libraries=[])
         mock_logger.setLevel.assert_called_once_with(logging.ERROR)
+
+    @patch("sys.argv", ["bootstrap", "-r", "requirements.txt"])
+    def test_requirements_parser(self):
+        requirements_file_contents = """
+            # This is a comment, to show how #-prefixed lines are ignored.
+            # It is possible to specify requirements as plain names.
+            pytest
+            pytest-cov
+            beautifulsoup4
+
+            # The syntax supported here is the same as that of requirement specifiers.
+            docopt == 0.6.1
+            requests [security] >= 2.8.1, == 2.8.* ; python_version < "2.7"
+            urllib3 @ https://github.com/urllib3/urllib3/archive/refs/tags/1.26.8.zip
+
+            # It is possible to refer to other requirement files or constraints files.
+            -r other-requirements.txt
+            --constraint constraints.txt
+
+            # It is possible to refer to specific local distribution paths.
+            ./downloads/numpy-1.9.2-cp34-none-win32.whl
+
+            # It is possible to refer to URLs.
+            http://wxpython.org/Phoenix/snapshot-builds/wxPython_Phoenix-3.0.3.dev1820+49a8884-cp34-none-win_amd64.whl
+        """
+        with tempfile.TemporaryDirectory() as tempdirname:
+            (Path(tempdirname) / "requirements.txt").write_text(
+                requirements_file_contents
+            )
+            with self.assertLogs(level="WARNING") as logs:
+                with change_dir(tempdirname):
+                    bootstrap.run()
+            print(logs.output)
+            self.assertEqual(len(logs.records), 6)
+            self.assertEqual(
+                logs.records[0].message.strip(),
+                "ignoring argument on line 14 in requirements.txt",
+            )
+            self.assertEqual(
+                logs.records[1].message.strip(),
+                "ignoring argument on line 15 in requirements.txt",
+            )
+            self.assertEqual(
+                logs.records[2].message.strip(),
+                "ignoring requirement on line 18 in requirements.txt",
+            )
+            self.assertEqual(
+                logs.records[3].message.strip(),
+                "ignoring requirement on line 21 in requirements.txt",
+            )
+            self.assertEqual(
+                logs.records[4].message.strip(),
+                "instrumentation for package requests is available but a specific version was not specified in the requirements. Skipping.",
+            )
+            self.assertEqual(
+                logs.records[5].message.strip(),
+                "instrumentation for package urllib3 is available but a specific version was not specified in the requirements. Skipping.",
+            )
+
+    @patch(
+        "sys.argv",
+        ["bootstrap", "-a", "requirements", "-r", "requirements.txt"],
+    )
+    def test_requirements(self):
+        with tempfile.TemporaryDirectory() as tempdirname:
+            (Path(tempdirname) / "requirements.txt").write_text(
+                "celery == 5.0.0"
+            )
+            with change_dir(tempdirname):
+                with patch("sys.stdout", new=StringIO()) as fake_out:
+                    bootstrap.run()
+        self.assertIn(
+            "celery",
+            fake_out.getvalue(),
+        )
+
+    @patch("sys.argv", ["bootstrap", "-a", "requirements", "-r", "-"])
+    def test_requirements_stdin(self):
+        with (
+            patch("sys.stdout", new=StringIO()) as fake_out,
+            patch("sys.stdin", new=StringIO("celery == 5.0.0")),
+        ):
+            bootstrap.run()
+        self.assertIn(
+            "celery",
+            fake_out.getvalue(),
+        )

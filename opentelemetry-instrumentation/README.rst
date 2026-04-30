@@ -33,15 +33,26 @@ opentelemetry-bootstrap
 
 ::
 
-    opentelemetry-bootstrap [-a |--action=][install|requirements]
+    opentelemetry-bootstrap [-h] [--version] [-a {install,requirements}] [-r REQUIREMENTS]
 
-This command install default instrumentation packages and detects active Python site-packages
-to figure out which instrumentation packages the user might want to install. By default, it
-prints out a list of the default and detected instrumentation packages that can be added to a
-requirements.txt file. It also supports installing the packages when run with
+This command installs default instrumentation packages and detects instrumentation
+packages the user might want to install. The detected instrumentation packages are based
+either on the active Python site-packages, or the contents of a Python requirements file
+when using :code:`--requirements=...` or :code:`-r ...`.  By default, it prints out a
+list of the default and detected instrumentation packages that can be added to a
+:code:`requirements.txt`` file. It also supports installing the packages when run with
 :code:`--action=install` or :code:`-a install` flag. All default and detectable
-instrumentation packages are defined `here <https://github.com/open-telemetry/opentelemetry-python-contrib/blob/main/opentelemetry-instrumentation/src/opentelemetry/instrumentation/bootstrap_gen.py>`.
+instrumentation packages are defined `here
+<https://github.com/open-telemetry/opentelemetry-python-contrib/blob/main/opentelemetry-instrumentation/src/opentelemetry/instrumentation/bootstrap_gen.py>`.
 
+When using :code:`--requirements=...` or :code:`-r ...` it is possible to use either a
+requirements.txt file or `:code:``-` to read from stdin. This can be used to pipe the
+output of other programs, for example :code:`uv` which can generate a list of
+dependencies from a pyproject.toml file.
+
+::
+
+    uv pip compile pyproject.toml | opentelemetry-bootstrap -a requirements -r -
 
 opentelemetry-instrument
 ------------------------

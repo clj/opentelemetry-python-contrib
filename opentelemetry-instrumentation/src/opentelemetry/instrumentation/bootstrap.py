@@ -15,6 +15,7 @@
 import argparse
 import logging
 import sys
+from functools import partial
 from subprocess import (
     PIPE,
     CalledProcessError,
@@ -24,7 +25,8 @@ from subprocess import (
 )
 from typing import Optional
 
-from packaging.requirements import Requirement
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from opentelemetry.instrumentation.bootstrap_gen import (
     default_instrumentations as gen_default_instrumentations,
@@ -97,7 +99,28 @@ def _pip_check(libraries):
                 raise RuntimeError(f"Dependency conflict found: {pip_check}")
 
 
-def _is_installed(req):
+def _requirements_version(req, requirements):
+    try:
+        dist_version = requirements[canonicalize_name(req)].specifier
+        if (
+            len(dist_version) > 1
+            or not (dist_version := str(dist_version)).startswith("==")
+            and not dist_version.startswith("===")
+        ):
+            logger.warning(
+                "instrumentation for package %s is available"
+                " but a specific version was not specified in the requirements."
+                " Skipping.",
+                req,
+            )
+            raise PackageNotFoundError(req)
+    except KeyError:
+        raise PackageNotFoundError(req)
+
+    return dist_version[2:]
+
+
+def _is_installed(req, version):
     req = Requirement(req)
 
     try:
@@ -116,24 +139,56 @@ def _is_installed(req):
     return True
 
 
-def _find_installed_libraries(default_instrumentations, libraries):
+def _parse_requirements_file(fp, filename):
+    requirements = {}
+
+    for i, line in enumerate(fp, start=1):
+        if not (line := line.strip()) or line.startswith("#"):
+            continue
+        elif line.startswith("-"):
+            logger.warning("ignoring argument on line %i in %s", i, filename)
+            continue
+        try:
+            req = Requirement(line)
+        except InvalidRequirement:
+            logger.warning(
+                "ignoring requirement on line %i in %s", i, filename
+            )
+            continue
+        requirements[req.name] = req
+
+    return requirements
+
+
+def _find_installed_libraries(
+    default_instrumentations, libraries, requirements=None
+):
     yield from default_instrumentations
 
+    if requirements is None:
+        version_fn = version
+    else:
+        version_fn = partial(_requirements_version, requirements=requirements)
+
     for lib in libraries:
-        if _is_installed(lib["library"]):
+        if _is_installed(lib["library"], version_fn):
             yield lib["instrumentation"]
 
 
-def _run_requirements(default_instrumentations, libraries):
+def _run_requirements(default_instrumentations, libraries, requirements=None):
     print(
         "\n".join(
-            _find_installed_libraries(default_instrumentations, libraries)
+            _find_installed_libraries(
+                default_instrumentations, libraries, requirements
+            )
         )
     )
 
 
-def _run_install(default_instrumentations, libraries):
-    for lib in _find_installed_libraries(default_instrumentations, libraries):
+def _run_install(default_instrumentations, libraries, requirements=None):
+    for lib in _find_installed_libraries(
+        default_instrumentations, libraries, requirements
+    ):
         _sys_pip_install(lib)
     _pip_check(libraries)
 
@@ -172,6 +227,14 @@ def run(
                        be piped and appended to a requirements.txt file.
         """,
     )
+    parser.add_argument(
+        "-r",
+        "--requirements",
+        help="""
+        read dependencies from a requirements file instead of using the
+        current Python environment. Use - to read from stdin.
+        """,
+    )
     args = parser.parse_args()
 
     if args.quiet:
@@ -183,8 +246,19 @@ def run(
     if default_instrumentations is None:
         default_instrumentations = gen_default_instrumentations
 
+    if args.requirements:
+        if args.requirements == "-":
+            req_filename = "stdin"
+            req_fp = sys.stdin
+        else:
+            req_filename = args.requirements
+            req_fp = open(req_filename, "r")
+        requirements = _parse_requirements_file(req_fp, req_filename)
+    else:
+        requirements = None
+
     cmd = {
         action_install: _run_install,
         action_requirements: _run_requirements,
     }[args.action]
-    cmd(default_instrumentations, libraries)
+    cmd(default_instrumentations, libraries, requirements)
